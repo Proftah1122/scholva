@@ -20,6 +20,6 @@
     "@scholva/shared-types": "0.1.0"
   },
   "devDependencies": {
-    "vitest": "^2.0.5"
+    "vitest": "^4.1.9"
   }
 }
