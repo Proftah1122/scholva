@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import type { ProblemDetails } from "@scholva/shared-types";
+import { ApplicationError } from "../../application/shared/application-error.js";
 import { ProblemDetailError } from "../http/problem-detail-error.js";
 import { getCorrelationId } from "./correlation-id.js";
 
@@ -17,6 +18,18 @@ export function errorHandler(error: unknown, _req: Request, res: Response, _next
 
   if (error instanceof ProblemDetailError) {
     res.status(error.status).json(error.toProblemDetails(correlationId));
+    return;
+  }
+
+  if (error instanceof ApplicationError) {
+    const body: ProblemDetails = {
+      type: error.type,
+      title: error.title,
+      status: error.status,
+      detail: error.message,
+      correlation_id: correlationId
+    };
+    res.status(error.status).json(body);
     return;
   }
 

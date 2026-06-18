@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Worker, type ConnectionOptions } from "bullmq";
 import { loadWorkerConfig } from "./config.js";
-import { noopProcessor } from "./processors/noop.processor.js";
+import { processScholvaJob } from "./processors/job-processor.js";
 import { QUEUES } from "./queues/queue-names.js";
 
 const config = loadWorkerConfig(process.env);
@@ -10,15 +10,17 @@ const connection: ConnectionOptions = {
   maxRetriesPerRequest: null
 };
 
-const worker = new Worker(QUEUES.AI_PIPELINE, noopProcessor, {
+const workers = Object.values(QUEUES).map((queueName) => new Worker(queueName, processScholvaJob, {
   connection,
   concurrency: config.WORKER_CONCURRENCY
-});
+}));
 
-worker.on("ready", () => {
-  console.log("scholva-worker ready");
-});
+for (const worker of workers) {
+  worker.on("ready", () => {
+    console.log(`scholva-worker ready: ${worker.name}`);
+  });
 
-worker.on("failed", (job, error) => {
-  console.error({ jobId: job?.id, error }, "worker job failed");
-});
+  worker.on("failed", (job, error) => {
+    console.error({ queueName: worker.name, jobId: job?.id, error }, "worker job failed");
+  });
+}

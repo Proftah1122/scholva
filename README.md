@@ -29,3 +29,15 @@ docker compose up -d
 ```
 
 Copy `.env.example` to `.env` before running services that need external providers.
+
+## MVP API Surface
+
+The current implementation includes authenticated REST routes for:
+
+- Identity: register, verify email, login, refresh, logout.
+- Scholar: profile upsert, project metadata upload, suggestion dashboard.
+- Industry: company profile, problem posting, problem listing.
+- Suggestion and matching: deterministic fallback topic generation, problem surfacing, lexical matching.
+- Engagement and subscription: contact requests and local subscription activation for development.
+
+The frontend console calls these APIs using `NEXT_PUBLIC_API_URL`.
