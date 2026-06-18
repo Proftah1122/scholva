@@ -38,6 +38,17 @@ The current implementation includes authenticated REST routes for:
 - Scholar: profile upsert, project metadata upload, suggestion dashboard.
 - Industry: company profile, problem posting, problem listing.
 - Suggestion and matching: deterministic fallback topic generation, problem surfacing, lexical matching.
-- Engagement and subscription: contact requests and local subscription activation for development.
+- Engagement and subscription: contact requests, Paystack initiation/webhook handling, and local subscription activation for development.
 
 The frontend console calls these APIs using `NEXT_PUBLIC_API_URL`.
+
+## Background Jobs
+
+API writes enqueue BullMQ jobs for:
+
+- PDF extraction, Claude tagging, and Voyage embedding for uploaded projects.
+- Problem embedding and matching.
+- Topic suggestion generation.
+- Problem surfacing and weekly digests.
+
+If `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, or `RESEND_API_KEY` are absent, workers use deterministic fallbacks and skip outbound email while preserving idempotent database updates.

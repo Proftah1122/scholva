@@ -8,9 +8,13 @@ const configSchema = z.object({
   JWT_PRIVATE_KEY: z.string().optional(),
   JWT_PUBLIC_KEY: z.string().optional(),
   REDIS_URL: z.string().url().default("redis://localhost:6379"),
+  VOYAGE_API_KEY: z.string().optional(),
   CLOUDINARY_CLOUD_NAME: z.string().optional(),
   CLOUDINARY_API_KEY: z.string().optional(),
-  CLOUDINARY_API_SECRET: z.string().optional()
+  CLOUDINARY_API_SECRET: z.string().optional(),
+  PAYSTACK_SECRET_KEY: z.string().optional(),
+  PAYSTACK_PUBLIC_KEY: z.string().optional(),
+  PAYSTACK_WEBHOOK_SECRET: z.string().optional()
 });
 
 export type ApiConfig = z.infer<typeof configSchema>;

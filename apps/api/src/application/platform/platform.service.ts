@@ -1,6 +1,7 @@
 import type { ConsentLevel, PlanTier, UUID } from "@scholva/shared-types";
 import { getDisciplinesForSector, getSectorsForDiscipline } from "@scholva/shared-utils";
 import type { PrismaDatabase } from "../../infrastructure/database/prisma-client.js";
+import type { JobQueuePort } from "../ports/job-queue.port.js";
 import { ApplicationError } from "../shared/application-error.js";
 
 export interface ScholarProfileInput {
@@ -43,7 +44,12 @@ export interface ProblemInput {
 }
 
 export class PlatformService {
-  constructor(private readonly db: PrismaDatabase) {}
+  constructor(
+    private readonly db: PrismaDatabase,
+    private readonly jobs: JobQueuePort,
+    private readonly paystackSecretKey: string | undefined,
+    private readonly voyageApiKey: string | undefined
+  ) {}
 
   async upsertScholarProfile(userId: UUID, input: ScholarProfileInput): Promise<{ readonly scholarId: UUID }> {
     const scholar = await this.db.scholar.upsert({
@@ -69,7 +75,7 @@ export class PlatformService {
       }
     });
 
-    await this.generateSuggestionsForScholar(scholar.id, "SCHOLAR_REGISTERED");
+    await this.jobs.enqueueGenerateSuggestions(scholar.id);
     return { scholarId: scholar.id };
   }
 
@@ -101,6 +107,7 @@ export class PlatformService {
       }
     });
 
+    await this.jobs.enqueueEmbedProject(project.id);
     return {
       projectId: project.id,
       status: "processing"
@@ -129,6 +136,27 @@ export class PlatformService {
 
   async listProjects(params: { readonly query?: string; readonly discipline?: string; readonly page: number; readonly pageSize: number }): Promise<unknown> {
     const skip = (params.page - 1) * params.pageSize;
+    if (params.query !== undefined && this.voyageApiKey !== undefined && this.voyageApiKey.length > 0) {
+      const queryVector = await this.embedQuery(params.query);
+      if (queryVector !== null) {
+        const vector = `[${queryVector.join(",")}]`;
+        const disciplineFilter = params.discipline === undefined ? "" : "AND discipline = $4";
+        return this.db.$queryRawUnsafe(
+          `SELECT id, scholar_id, title, abstract, discipline, year, file_url, consent_level, allows_contact, created_at,
+            1 - (embedding <=> $1::vector) AS similarity
+           FROM projects
+           WHERE is_published = true
+             AND consent_level != 'PRIVATE'
+             AND embedding IS NOT NULL
+             ${disciplineFilter}
+           ORDER BY embedding <=> $1::vector
+           OFFSET $2
+           LIMIT $3`,
+          ...(params.discipline === undefined ? [vector, skip, params.pageSize] : [vector, skip, params.pageSize, params.discipline])
+        );
+      }
+    }
+
     return this.db.project.findMany({
       where: {
         isPublished: true,
@@ -172,6 +200,7 @@ export class PlatformService {
 
   async postProblem(userId: UUID, input: ProblemInput): Promise<{ readonly problemId: UUID; readonly surfacedCount: number }> {
     const company = await this.requireCompany(userId);
+    await this.requireProblemPostingPlan(company.id, input.isOpenToStudents);
     const problem = await this.db.problem.create({
       data: {
         companyId: company.id,
@@ -184,10 +213,14 @@ export class PlatformService {
       }
     });
 
-    const surfacedCount = input.isOpenToStudents ? await this.surfaceProblem(problem.id) : 0;
+    await this.jobs.enqueueEmbedProblem(problem.id);
+    await this.jobs.enqueueRunMatch(problem.id);
+    if (input.isOpenToStudents) {
+      await this.jobs.enqueueSurfaceProblem(problem.id);
+    }
     return {
       problemId: problem.id,
-      surfacedCount
+      surfacedCount: 0
     };
   }
 
@@ -200,7 +233,14 @@ export class PlatformService {
 
   async generateSuggestions(userId: UUID): Promise<{ readonly batchId: UUID; readonly suggestionsCount: number }> {
     const scholar = await this.requireScholar(userId);
-    return this.generateSuggestionsForScholar(scholar.id, "WEEKLY_DIGEST");
+    await this.jobs.enqueueGenerateSuggestions(scholar.id);
+    const batch = await this.db.suggestionBatch.create({
+      data: { scholarId: scholar.id, triggeredBy: "WEEKLY_DIGEST" }
+    });
+    return {
+      batchId: batch.id,
+      suggestionsCount: 0
+    };
   }
 
   async getSuggestions(userId: UUID): Promise<unknown> {
@@ -301,9 +341,13 @@ export class PlatformService {
 
   async activateSubscription(userId: UUID, planTier: PlanTier): Promise<{ readonly subscriptionId: UUID }> {
     const company = await this.requireCompany(userId);
+    return this.activateSubscriptionForCompany(company.id, planTier);
+  }
+
+  async activateSubscriptionForCompany(companyId: UUID, planTier: PlanTier): Promise<{ readonly subscriptionId: UUID }> {
     const now = new Date();
     const subscription = await this.db.subscription.upsert({
-      where: { companyId: company.id },
+      where: { companyId },
       update: {
         planTier,
         status: "ACTIVE",
@@ -311,7 +355,7 @@ export class PlatformService {
         currentPeriodEnd: addDays(now, 30)
       },
       create: {
-        companyId: company.id,
+        companyId,
         planTier,
         status: "ACTIVE",
         currentPeriodStart: now,
@@ -320,6 +364,44 @@ export class PlatformService {
     });
 
     return { subscriptionId: subscription.id };
+  }
+
+  async initiateSubscription(userId: UUID, planTier: PlanTier, callbackUrl: string): Promise<{ readonly authorizationUrl: string }> {
+    const company = await this.requireCompany(userId);
+    if (this.paystackSecretKey === undefined || this.paystackSecretKey.length === 0) {
+      const subscription = await this.activateSubscription(userId, planTier);
+      return { authorizationUrl: `scholva://local-subscription/${subscription.subscriptionId}` };
+    }
+
+    const amount = planTier === "ENTERPRISE" ? 250_000_00 : planTier === "PROFESSIONAL" ? 75_000_00 : 0;
+    const response = await fetch("https://api.paystack.co/transaction/initialize", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.paystackSecretKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        email: company.contactEmail,
+        amount,
+        callback_url: callbackUrl,
+        metadata: {
+          companyId: company.id,
+          planTier
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new ApplicationError({
+        status: 502,
+        type: "https://scholva.ng/problems/paystack-error",
+        title: "Paystack Error",
+        detail: "Unable to initialize the Paystack subscription transaction."
+      });
+    }
+
+    const json = await response.json() as { readonly data?: { readonly authorization_url?: string } };
+    return { authorizationUrl: json.data?.authorization_url ?? "" };
   }
 
   private async generateSuggestionsForScholar(
@@ -440,6 +522,47 @@ export class PlatformService {
     return company;
   }
 
+  private async requireProblemPostingPlan(companyId: UUID, isOpenToStudents: boolean): Promise<void> {
+    const subscription = await this.db.subscription.findUnique({ where: { companyId } });
+    if (subscription === null || subscription.status !== "ACTIVE" || subscription.currentPeriodEnd <= new Date()) {
+      throw new ApplicationError({
+        status: 402,
+        type: "https://scholva.ng/problems/subscription-required",
+        title: "Subscription Required",
+        detail: "An active Professional or Enterprise subscription is required to post industry problems."
+      });
+    }
+
+    if (subscription.planTier === "EXPLORER") {
+      throw new ApplicationError({
+        status: 403,
+        type: "https://scholva.ng/problems/plan-upgrade-required",
+        title: "Plan Upgrade Required",
+        detail: "Problem posting requires the Professional or Enterprise plan."
+      });
+    }
+
+    if (!isOpenToStudents || subscription.planTier === "ENTERPRISE") {
+      return;
+    }
+
+    const monthlyOpenToStudentPosts = await this.db.problem.count({
+      where: {
+        companyId,
+        isOpenToStudents: true,
+        createdAt: { gte: addDays(new Date(), -30) }
+      }
+    });
+    if (monthlyOpenToStudentPosts >= 10) {
+      throw new ApplicationError({
+        status: 403,
+        type: "https://scholva.ng/problems/open-to-students-quota-exceeded",
+        title: "Open To Students Quota Exceeded",
+        detail: "Professional plans can post up to 10 open-to-students problems per 30 days."
+      });
+    }
+  }
+
   private notFound(detail: string): ApplicationError {
     return new ApplicationError({
       status: 404,
@@ -447,6 +570,28 @@ export class PlatformService {
       title: "Not Found",
       detail
     });
+  }
+
+  private async embedQuery(query: string): Promise<readonly number[] | null> {
+    const response = await fetch("https://api.voyageai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.voyageApiKey ?? ""}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        input: [query],
+        model: "voyage-large-2",
+        input_type: "query"
+      })
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const json = await response.json() as { readonly data?: readonly { readonly embedding?: readonly number[] }[] };
+    return json.data?.[0]?.embedding ?? null;
   }
 }
 

@@ -212,6 +212,7 @@ export default function HomePage() {
         <aside className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
             <button className="command" disabled={!isAuthed} onClick={() => void request("/suggestions/generate", { method: "POST" })}>Suggest</button>
+            <button className="command" disabled={!isAuthed} onClick={() => void request("/subscriptions/mock-activate", { method: "POST", body: JSON.stringify({ planTier: "PROFESSIONAL" }) })}>Plan</button>
             <button className="command" onClick={() => void request("/projects")}>Projects</button>
             <button className="command" onClick={() => void request("/problems")}>Problems</button>
             <button className="command" disabled={!isAuthed} onClick={() => void request("/suggestions")}>Topics</button>

@@ -11,6 +11,7 @@ import {
   PrismaRefreshTokenRepository,
   PrismaUserRepository
 } from "./infrastructure/database/prisma-identity.repository.js";
+import { BullMQJobQueue, InlineNoopJobQueue } from "./infrastructure/queue/bullmq-job-queue.js";
 import type { ApiConfig } from "./config.js";
 
 export interface Container {
@@ -28,6 +29,7 @@ export function createContainer(config: ApiConfig): Container {
     config.JWT_PUBLIC_KEY,
     () => tokenGenerator.generateRefreshToken()
   );
+  const jobQueue = config.NODE_ENV === "test" ? new InlineNoopJobQueue() : new BullMQJobQueue(config.REDIS_URL);
 
   return {
     bootedAt: new Date(),
@@ -43,6 +45,6 @@ export function createContainer(config: ApiConfig): Container {
       new SystemClock(),
       config.NODE_ENV !== "production"
     ),
-    platformService: new PlatformService(prisma)
+    platformService: new PlatformService(prisma, jobQueue, config.PAYSTACK_SECRET_KEY, config.VOYAGE_API_KEY)
   };
 }

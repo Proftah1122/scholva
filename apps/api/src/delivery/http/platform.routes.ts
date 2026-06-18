@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { ConsentLevel, PlanTier } from "@scholva/shared-types";
@@ -53,6 +54,10 @@ const contactRequestSchema = z.object({
 
 const subscriptionSchema = z.object({
   planTier: z.nativeEnum(PlanTier)
+});
+
+const initiateSubscriptionSchema = subscriptionSchema.extend({
+  callbackUrl: z.string().url()
 });
 
 export function createPlatformRouter(container: Container): Router {
@@ -181,7 +186,58 @@ export function createPlatformRouter(container: Container): Router {
     res.json(await container.platformService.activateSubscription(auth.userId, input.planTier));
   }));
 
+  router.post("/subscriptions/initiate", requireAuth, asyncHandler(async (req, res) => {
+    const auth = getAuth(res);
+    const input = parseBody(initiateSubscriptionSchema, req);
+    res.json(await container.platformService.initiateSubscription(auth.userId, input.planTier, input.callbackUrl));
+  }));
+
+  router.post("/subscriptions/paystack/webhook", asyncHandler(async (req, res) => {
+    const secret = container.config.PAYSTACK_WEBHOOK_SECRET;
+    if (secret === undefined || secret.length === 0) {
+      throw new ProblemDetailError({
+        type: "https://scholva.ng/problems/paystack-webhook-not-configured",
+        title: "Paystack Webhook Not Configured",
+        status: 503,
+        detail: "Paystack webhook secret is not configured."
+      });
+    }
+
+    const rawBody = (req as typeof req & { rawBody?: string }).rawBody ?? "";
+    const signature = req.header("x-paystack-signature") ?? "";
+    if (!isValidPaystackSignature(rawBody, signature, secret)) {
+      throw new ProblemDetailError({
+        type: "https://scholva.ng/problems/invalid-webhook-signature",
+        title: "Invalid Webhook Signature",
+        status: 401,
+        detail: "Webhook signature verification failed."
+      });
+    }
+
+    const body = req.body as {
+      readonly event?: string;
+      readonly data?: {
+        readonly metadata?: {
+          readonly companyId?: string;
+          readonly planTier?: PlanTier;
+        };
+      };
+    };
+    if (body.event === "charge.success" && body.data?.metadata?.companyId !== undefined && body.data.metadata.planTier !== undefined) {
+      await container.platformService.activateSubscriptionForCompany(body.data.metadata.companyId, body.data.metadata.planTier);
+    }
+
+    res.json({ received: true });
+  }));
+
   return router;
+}
+
+function isValidPaystackSignature(rawBody: string, signature: string, secret: string): boolean {
+  const expected = createHmac("sha512", secret).update(rawBody).digest("hex");
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const providedBuffer = Buffer.from(signature, "hex");
+  return expectedBuffer.length === providedBuffer.length && timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
 function parseUuid(value: string | undefined): string {

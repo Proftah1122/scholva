@@ -1,16 +1,19 @@
 import "dotenv/config";
 import { Worker, type ConnectionOptions } from "bullmq";
 import { loadWorkerConfig } from "./config.js";
-import { processScholvaJob } from "./processors/job-processor.js";
+import { prisma } from "./infrastructure/prisma-client.js";
+import { createScholvaJobProcessor, createWorkerServices } from "./processors/job-processor.js";
 import { QUEUES } from "./queues/queue-names.js";
 
 const config = loadWorkerConfig(process.env);
+const services = createWorkerServices(config, prisma);
+const processor = createScholvaJobProcessor(services);
 const connection: ConnectionOptions = {
   url: config.REDIS_URL,
   maxRetriesPerRequest: null
 };
 
-const workers = Object.values(QUEUES).map((queueName) => new Worker(queueName, processScholvaJob, {
+const workers = Object.values(QUEUES).map((queueName) => new Worker(queueName, processor, {
   connection,
   concurrency: config.WORKER_CONCURRENCY
 }));
