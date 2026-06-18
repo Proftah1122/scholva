@@ -1,0 +1,24 @@
+{
+  "name": "scholva",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Scholva monorepo: Nigerian student research intelligence platform.",
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "typecheck": "tsc -b",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "prisma:validate": "npm run prisma:validate -w @scholva/api"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,357 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector, uuidOssp(map: "uuid-ossp"), pgTrgm(map: "pg_trgm")]
+}
+
+model User {
+  id                  String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  email               String         @unique
+  passwordHash        String         @map("password_hash")
+  userType            UserType       @map("user_type")
+  isVerified          Boolean        @default(false) @map("is_verified")
+  failedLoginAttempts Int            @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime?      @map("locked_until") @db.Timestamptz
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  scholar             Scholar?
+  company             Company?
+  refreshTokens       RefreshToken[]
+  otpTokens           OTPToken[]
+
+  @@map("users")
+}
+
+enum UserType {
+  STUDENT
+  INDUSTRY
+  ADMIN
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model OTPToken {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  purpose   OTPPurpose
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  usedAt    DateTime? @map("used_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("otp_tokens")
+}
+
+enum OTPPurpose {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+model Scholar {
+  id                 String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId             String              @unique @map("user_id") @db.Uuid
+  fullName           String              @map("full_name")
+  institution        String
+  department         String
+  graduationYear     Int                 @map("graduation_year")
+  disciplineFocus    String              @map("discipline_focus")
+  bio                String?
+  supervisorName     String?             @map("supervisor_name")
+  verificationStatus VerificationStatus  @default(PENDING) @map("verification_status")
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projects           Project[]
+  suggestionBatches  SuggestionBatch[]
+  topicSuggestions   TopicSuggestion[]
+  problemSurfacings  ProblemSurfacing[]
+  contactRequests    ContactRequest[]
+
+  @@index([disciplineFocus])
+  @@index([graduationYear])
+  @@map("scholars")
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model Project {
+  id                  String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  scholarId           String           @map("scholar_id") @db.Uuid
+  title               String
+  abstract            String
+  fullText            String?          @map("full_text")
+  fileUrl             String           @map("file_url")
+  discipline          String
+  problemDomain       String?          @map("problem_domain")
+  methodology         String?
+  year                Int
+  embedding           Unsupported("vector(1536)")?
+  consentLevel        ConsentLevel     @default(PUBLIC) @map("consent_level")
+  allowsContact       Boolean          @default(true) @map("allows_contact")
+  allowsCommercialUse Boolean          @default(false) @map("allows_commercial_use")
+  isPublished         Boolean          @default(false) @map("is_published")
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  scholar             Scholar          @relation(fields: [scholarId], references: [id], onDelete: Cascade)
+  tags                ProjectTag[]
+  matches             Match[]
+  contactRequests     ContactRequest[]
+
+  @@index([scholarId])
+  @@index([discipline])
+  @@index([year])
+  @@index([isPublished])
+  @@map("projects")
+}
+
+enum ConsentLevel {
+  PUBLIC
+  GATED
+  PRIVATE
+}
+
+model ProjectTag {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  tag       String
+  source    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([tag])
+  @@map("project_tags")
+}
+
+model Company {
+  id              String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  userId          String           @unique @map("user_id") @db.Uuid
+  name            String
+  sector          String
+  size            String?
+  website         String?
+  description     String?
+  contactEmail    String           @map("contact_email")
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  problems        Problem[]
+  contactRequests ContactRequest[]
+  subscription    Subscription?
+
+  @@index([sector])
+  @@map("companies")
+}
+
+model Problem {
+  id               String              @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  companyId        String              @map("company_id") @db.Uuid
+  title            String
+  description      String
+  sector           String
+  skillsRequired   String[]            @map("skills_required")
+  urgency          Urgency             @default(MEDIUM)
+  status           ProblemStatus       @default(OPEN)
+  isOpenToStudents Boolean             @default(false) @map("is_open_to_students")
+  embedding        Unsupported("vector(1536)")?
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz
+  company          Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  matches          Match[]
+  topicSuggestions TopicSuggestion[]
+  problemSurfacings ProblemSurfacing[]
+
+  @@index([companyId])
+  @@index([sector])
+  @@index([status])
+  @@index([isOpenToStudents])
+  @@map("problems")
+}
+
+enum Urgency {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ProblemStatus {
+  OPEN
+  MATCHED
+  CLOSED
+}
+
+model SuggestionBatch {
+  id          String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  scholarId   String             @map("scholar_id") @db.Uuid
+  triggeredBy SuggestionTrigger  @map("triggered_by")
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  scholar     Scholar            @relation(fields: [scholarId], references: [id], onDelete: Cascade)
+  suggestions TopicSuggestion[]
+
+  @@index([scholarId])
+  @@map("suggestion_batches")
+}
+
+enum SuggestionTrigger {
+  SCHOLAR_REGISTERED
+  PROBLEM_POSTED
+  WEEKLY_DIGEST
+}
+
+model TopicSuggestion {
+  id               String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  batchId          String                 @map("batch_id") @db.Uuid
+  scholarId        String                 @map("scholar_id") @db.Uuid
+  relatedProblemId String?                @map("related_problem_id") @db.Uuid
+  title            String
+  rationale        String
+  discipline       String
+  relevanceScore   Decimal                @map("relevance_score") @db.Decimal(5, 4)
+  topicEmbedding   Unsupported("vector(1536)")? @map("topic_embedding")
+  status           TopicSuggestionStatus  @default(NEW)
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+  batch            SuggestionBatch        @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  scholar          Scholar                @relation(fields: [scholarId], references: [id], onDelete: Cascade)
+  relatedProblem   Problem?               @relation(fields: [relatedProblemId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@index([scholarId])
+  @@index([relatedProblemId])
+  @@index([status])
+  @@map("topic_suggestions")
+}
+
+enum TopicSuggestionStatus {
+  NEW
+  VIEWED
+  SAVED
+  DISMISSED
+}
+
+model ProblemSurfacing {
+  id             String                 @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  scholarId      String                 @map("scholar_id") @db.Uuid
+  problemId      String                 @map("problem_id") @db.Uuid
+  relevanceScore Decimal                @map("relevance_score") @db.Decimal(5, 4)
+  surfacedAt     DateTime               @default(now()) @map("surfaced_at") @db.Timestamptz
+  status         ProblemSurfacingStatus @default(UNSEEN)
+  scholar        Scholar                @relation(fields: [scholarId], references: [id], onDelete: Cascade)
+  problem        Problem                @relation(fields: [problemId], references: [id], onDelete: Cascade)
+
+  @@unique([scholarId, problemId])
+  @@index([scholarId])
+  @@index([problemId])
+  @@index([status])
+  @@map("problem_surfacings")
+}
+
+enum ProblemSurfacingStatus {
+  UNSEEN
+  VIEWED
+  INTERESTED
+}
+
+model Match {
+  id              String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  problemId       String      @map("problem_id") @db.Uuid
+  projectId       String      @map("project_id") @db.Uuid
+  similarityScore Decimal     @map("similarity_score") @db.Decimal(6, 5)
+  explanation     String
+  status          MatchStatus @default(PENDING)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+  problem         Problem     @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  project         Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([problemId, projectId])
+  @@index([problemId])
+  @@index([projectId])
+  @@index([status])
+  @@map("matches")
+}
+
+enum MatchStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+model ContactRequest {
+  id          String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  companyId   String               @map("company_id") @db.Uuid
+  projectId   String               @map("project_id") @db.Uuid
+  scholarId   String               @map("scholar_id") @db.Uuid
+  message     String
+  status      ContactRequestStatus @default(PENDING)
+  createdAt   DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  respondedAt DateTime?            @map("responded_at") @db.Timestamptz
+  company     Company              @relation(fields: [companyId], references: [id])
+  project     Project              @relation(fields: [projectId], references: [id])
+  scholar     Scholar              @relation(fields: [scholarId], references: [id])
+
+  @@index([companyId])
+  @@index([projectId])
+  @@index([scholarId])
+  @@index([status])
+  @@map("contact_requests")
+}
+
+enum ContactRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  EXPIRED
+}
+
+model Subscription {
+  id                     String             @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  companyId              String             @unique @map("company_id") @db.Uuid
+  planTier               PlanTier           @map("plan_tier")
+  paystackSubscriptionId String?            @map("paystack_subscription_id")
+  status                 SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart     DateTime           @map("current_period_start") @db.Timestamptz
+  currentPeriodEnd       DateTime           @map("current_period_end") @db.Timestamptz
+  createdAt              DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt              DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+  company                Company            @relation(fields: [companyId], references: [id])
+
+  @@index([status])
+  @@map("subscriptions")
+}
+
+enum PlanTier {
+  EXPLORER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}

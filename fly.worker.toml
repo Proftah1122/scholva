@@ -1,0 +1,9 @@
+app = "scholva-worker"
+primary_region = "jnb"
+
+[build]
+  dockerfile = "apps/worker/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  WORKER_CONCURRENCY = "3"

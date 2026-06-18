@@ -1,0 +1,23 @@
+{
+  "name": "@scholva/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/index.ts",
+    "lint": "tsc -b --pretty false",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@scholva/shared-types": "0.1.0",
+    "bullmq": "^5.12.10",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2",
+    "vitest": "^2.0.5"
+  }
+}
